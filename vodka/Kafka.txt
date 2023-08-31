@@ -1,0 +1,277 @@
+Kafka
+    Kafka中的消息都是以kv键值对的形式存在的, 都可以为null, 一条消息就是一条记录, ProducerRecord
+    Basic
+        ack(写入策略/返回机制)
+            生产者发送数据到kafka中, kafka会以什么样的策略返回
+            all: 主分区和副本都写入成功之后, 返回响应给客户端
+        groupId(消费者组)
+            可以通过消费者组将若干个消费者组织到一起, 共同消费kafka中topic的数据
+            每一个消费者需要指定一个消费者组
+        partition
+            真正的物理存储消息的地方
+
+        拉取模式
+            消费者主动去kafka中拉取数据, 不是推送进来的, 而且是一批一批的拉取, 不是一条一条的拉取
+    重要概念
+        Broker
+            一个Kafka的集群通常是由多个Broker组成的, 从而实现负载均衡和容错
+            Broker是无状态的(Stateless), 他们是通过ZooKeeper来维护集群状态
+            一个Kafka中的Broker每秒可以处理数十万次读写, 每个Broker都可以处理TB消息而不影响性能
+        ZooKeeper 
+            ZK用来管理和协调Broker, 存储了Kafka的元数据(例如: 多少个topic, partition, consumer)
+            ZK服务主要用于通知生产者和消费者Kafka集群中有新的Broker加入, 或者Kafka集群中出现故障的Broker
+        生产者
+        消费者
+            负责从Broker中"拉取"数据
+            ⭐️"一个消费者消费一个分区", 如果有多个消费者消费一个分区, 此时实际上只会有一个消费者进行消费, 其他的消费者等到当前消费者挂了之后才开始消费
+            如果topic中只有一个分区, 那么他只能被一个消费者消费
+        ConsumerGroup(消费者组)
+            ConsumerGroup是Kafka提供的可扩展且具有容错性的消费者机制
+            一个消费者组可以包含多个消费者
+            一个消费者组有一个唯一的ID(groupId)
+            组内的消费者一起消费主题的分区中所有的数据
+        Partition(分区)
+            Kafka中, 主题被分为多个分区, 也就是实际存储数据的地方, 相当于ES中的分片
+            可以通过分区将数据分布在不同的服务器中
+            多个分区可以提高并发
+        Replica(副本)
+            确保某个服务器出现故障时, 数据依旧可用
+            一般设置副本数量>1
+        Topic(主题)
+            主题是用来做消息逻辑上的区分, 不同的主题中存储的消息类型和意义不一样, 理解就是队列, 生产者发布数据, 消费者拉取数据
+            Kafka中的主题必须要有标识符, 而且是"唯一的", Kafka中可以有任意数量的主题, 没有数量上的限制
+            主题中的消息是有结构的, 一般一个主题包含某一类消息
+            一旦生产者发送消息到主题中, 这些消息就不能被更新/修改
+            一个Topic可能包含多个Partition
+        Offset(偏移量)
+            消费者去拉取分区中的消息, 肯定要知道这次拉到了哪个位置, 下一次应该从哪里开始拉取, offset就是用来干这个的
+
+            Offset记录着下一条将要发送给Consumer的消息的序号, Offset是针对于"partition/consumer"而言的, 而不是针对消费者组而言的
+                消费者会去拉取指定分区中的数据, 每个分区对应的消费者不同, 所以那肯定是对于消费者而言的, 记录某个消费者拉某个分区的数据拉到了哪里
+            默认的Kafka将offset存储在"ZK"中
+                自动提交
+                    会根据我们设置的自动提交间隔时间, 将每个消费者的offset提交到ZK中进行保存
+            在一个分区里面, 消息是有顺序的方式存储着, 消息在每个分区中都有一个递增的id, 这个就是偏移量offset
+            偏移量在分区中才是有意义的, 分区和分区之间, offset没啥意义
+    Kafka幂等性
+        生产者幂等性
+            问题概述
+                生产者在发送消息给Broker时, 如果Broker保存成功, 但是由于返回ack给生产者时失败, 那么这个时候会导致生产者将消息重新发送给Broker, 导致消息重复发送
+            解决
+                为了解决生产者幂等性的问题, Kafka引入了 ProducerID(PID) + SequenceNumber 的概念
+                PID: 生产者的ID, 每个生产者在初始化时,就会分配一个唯一的ID, 这个PID对用户而言是无法感知到的
+                SequenceNumber: 针对每个生产者发送给每个主题的消息, 都有一个对应的一个从0开始递增的SequenceNumber
+
+                每次发送消息时, 就会把这两带上, 第一次发送消息给Broker, 如果成功, 对应的Partition中就会保存这两个, 如果ack失败, 生产者重发retry的时候, 也会带上和之前一样的PID和SequenceNumber, 那么此时当消息再到Broker, Broker发现这个消息之前已经发送过并且已经保存, 就不再进行处理/存储
+                    PID相同 并且 seq<=Broker中存储的seq, 不保存消息
+                开启配置
+                    enable.idempotence=true
+    生产者分区写入策略
+        生产者生产消息, 需要将消息存入到不同的partition中
+        1. 轮询策略
+            默认的策略, 也是使用的最多的策略, 可以最大限度的保证所有消息平均分配到一个分区
+            如果在生产消息时, key为null, 则使用轮训算法均衡地进行分配
+        2. 随机策略(不用)
+            每次都随机地将消息分配到每个分区,较早的版本中, 默认分区策略就是随机策略, 也是为了将消息均衡地写入每个分区, 但是后续轮训策略表现更佳, 所以基本很少使用随机策略
+        3. 对key进行hash
+            对key进行hash运算, 然后通过哈希值取模进行分区
+            可能会导致 数据倾斜
+                eg: 某个key包含了大量数据, 因为key值一样, 所有的数据将分配到一个分区中, 该分区的消息数量远大于其他分区
+        自定义分区策略
+            实现Partitioner接口
+    乱序问题/顺序消费
+        Kafka中的消息是全局乱序的, 局部Partition是有序的
+        如果我们要实现消息总是有序的, 可以将连续的消息放到一个Partition, 但是这样Kafka就失去了分布式的意义
+        Hash取余也只能保证局部有序性
+            eg: key: tableA 的数据在一个分区是有序的A, key: tableB 的数据在另一个分区是有序的A
+    消费者组的Rebalance机制(再均衡)
+        Kafka中的Rebalance再均衡机制, 是Kafka中确保ConsumerGroup下所有Consumer如何达成一致, 分配订阅topic的每个分区的机制
+        触发时机
+            1. 消费者组中的Consumer个数发生变化, 新的Consumer加入到消费者组中, 或者某个Consumer挂掉
+            2. 订阅的topic个数发生变化
+                一个消费者可以订阅多个不同的topic, 如果订阅中的topic数量发生变化, 也会rebalance
+            3. 所订阅的Topic中partition数量发生变化
+                有新增的partition或者挂掉的partition, 此时也会rebalance, 重新进行分配
+        Rebalance的不良影响
+            发生Rebalance, ConsumerGroup下所有的Consumer都会协调在一起共同参与, Kafka使用分配策略尽可能达到公平, 但是这个过程会对ConsumerGroup产生非常严重的影响, Rebalance过程中, 所有消费者都将停止工作, 知道Rebalance完成
+    消费者分区分配策略
+        概述
+            分区数量和消费者数量不一致时(eg:分区数量>消费者数量), 此时如何让哪个消费者消费哪个分区呢
+        策略
+            1. Range范围分配策略
+                概述
+                    Range范围分配策略是Kafka默认的分配策略, 它可以确保每个消费者消费的分区数量是均衡的. Range范围分配策略是针对"每个Topic"的
+                配置
+                    partition.assignment.strategy=org.apache.kafka.consumer.RangeAssignor
+                算法公式
+                    n=分区数量 / 消费者数量
+                    m=分区数量 % 消费者数量
+                    前m个消费者消费n+1个分区, 剩余的消费n个
+                    实际也就是轮训完了之后, 然后再从头到尾分配, 直至结束
+            2. RoundRobin轮训策略
+                概述
+                    针对所有的Topic和所有的分区(按照分区的hashcode进行排序), 所有的消费者依次去拉取对应分区中的消息
+                        消费者1拉第一个分区, 消费者2拉第二个分区, 消费者1拉第三个分区, 消费者2拉第四个分区...轮训直至结束
+            3. Sticky粘性分配策略
+                1. 发生Rebalance的时候, 分区的分配尽可能与上一次分配相同(不做改变, 避免因为重新分配导致的问题, 比如事物失效等)
+                2. 没有发生Rebalance时, Stricky粘性分配策略和RoundRobin分配策略类似
+    Producer的ACK机制(leader和follower都是说的 分区 ⭐️⭐️⭐️)
+        概述
+            因为kafka有副本的存在, 那么对副本关系较大的就是, Producer配置的acks参数了, ack参数表示当生产者生产消息时, 写入到副本的要求严格程度, 它决定了生产者如何在性能和可靠性之间做取舍
+        ack配置
+            0
+                不等待Broker进行确认, 直接发送下一条消息, "性能最高", 但是可能会存在消息丢失的情况
+            1
+                等待Borker中的分区leader确认接收后, 才会发送下一条数据, "性能中等"
+            -1/all
+                等待所有分区的副本写入/同步之后, 才会发送下一条数据, "可以保证数据不丢失", 性能最差
+            leader和follower都是说的 分区 ⭐️⭐️⭐️
+                leader负责读写, 而不是只写不读, 和以前那些组件不一样, leader负责读写, 依然有分布式的意义, follower只是用来同步数据的
+            Broker没有leader的概念
+    分区的Leader和Follower
+        概述
+            Kafka中, 每个topic都可以配置多个分区以及多个副本, 每个分区都有一个leader以及0个或者多个follower, 在创建topic时, kafka会将每个分区的leader均匀地分布在每个Broker上
+            正常使用Kafka是感知不到的Leader和Follower存在的, "所有的读写都是由Leader处理, 而所有的Follower都只是负责数据同步", Follower复制Leader的日志文件, 如果Leader出现故障, Follower就会被选举为Leader
+        简而言之
+            Kafka中的Leader和Follower是针对分区而言的
+            Kafka中的Leader负责处理读写操作, 而Follower只负责副本数据的同步
+            如果Leader出现故障, 其他Follower会被重新选举为Leader
+            Follower只负责数据同步, 拉取Leader对应分球的数据, 并保存到日志数据文件中
+    AR, ISR, OSR
+        概述
+            实际场景中, Leader有可能会出现一些故障, 所以Kafka一定会选举出新的Leader, Kafka中, 会把Follower的状态分为三类: AR, ISR, OSR
+        AR
+            分区中所有的已经分配的副本, 叫做AR(Assigned Replicas), 也就是所有的副本
+        ISR
+            所有与Leader副本保持一定程度同步的副本(包括Leader副本在内), 组成ISR(In-Sync Replicas, 在同步中的副本)
+        OSR
+            Follower副本同步"滞后过多"的副本(不包括Leader副本), 组成OSR(Out-of-Sync Replicas), 也就是没有和Leader保持同步的副本
+        AR=ISR+OSR
+        正常情况下, 所有的Follower副本都应该与Leader副本保持同步, 即AR=ISR, OSR集合为空
+        
+        重新选举很快
+    Leader选举
+        Leader对于消息的写入以及读取是非常关键的
+        1. Kafka是如何确定某个Partition是Leader, 哪个Partition是Follower?
+        2. 某个Leader崩溃了, 如何快速确定另外一个Leader? 因为Kafka吞吐量高, 延迟很低, 所以选举Leader必须非常快
+
+        Controller
+            概述
+                Kafka启动时, 会在所有的Broker中选择一个Controller(可以理解为其他中间件的Master)
+                Leader和Follower是针对Partition的, 而Controller则是针对Broker的
+                创建Topic, 添加分区, 修改副本数量之类的管理任务都是通过Controller完成的
+                Kafka分区Leader的选举, 也是Controller决定的
+
+                相当于是作为Broker的老大, 用来协调Leader选举的
+            Controller选举
+                在Kafka集群启动的时候, 每个Broker都会尝试去ZK上注册成为Controller(ZK临时节点)
+                但是只有一个竞争成功, 其他broker会注册成为该节点的监视器
+                一旦该临时节点状态发生变化, 其他就可以进行相应处理
+                Controller也是高可用的, 一旦某个Broker崩溃, 其他Broker会重新注册为Controller
+        选举过程(通过Controller进行选举的)
+            所有的Partition的Leade都由Controller决定
+            Controller会将Leader的改变直接通过RPC的方式, 通知需要为此做出响应的Broker(也就是当前分区Leader对应的副本存在的Brokers)
+            Controller读取到当前分区的ISR(In-Sync Replicas), 只要有一个Replica还幸存, 就选择其中一个作为Leader, 否则, 则任意选一个Replica作为Leader
+            如果该Partition的所有Replica都已经挂掉, 则新的Leader为-1, 就是Partition挂掉了
+        为什么不通过ZK进行选举Partition的Leader
+            Kafka集群如果业务很多的情况下, 会有很多的Partition
+            假设某个Broker宕机, 就会出现很多的Partition都需要重新选举Leader
+            如果用ZK进行Leader选举, 会给ZK带来巨大的压力, 因此Kafka中的Leader选举不能使用ZK实现
+    Leader均衡分配
+        如果某个Broker挂掉之后, 就可能导致Parition的leader分布不均匀, 就是一个Broker上存在一个Topic下不同Partition的Leader
+        此时可以通过对应的指令, 将Leader分配到优先的Leader对应的Broker, 确保leader均匀分配的
+    Kafka生产消费流程
+        生产者写入流程
+            1. 生产者先从ZK的"/brokers/topics/主题名/partitions/分区名/state"节点找到该partition的leader
+            2. Broker进程上的Leader将消息写入到本地log日志文件中, 顺序写⭐️⭐️⭐️, 速度很快
+            3. follower从leader上拉取消息, 写入到本地log, 顺序写⭐️⭐️⭐️, 并且向leader发送ack
+            4. leader接收到所有的ISR中的Replica的ACK后, 向生产者发送ack(取决于生产者的ack策略)
+        消费者处理流程
+            Kafka消费者采用拉取模型, 由消费者自己记录消费状态, 每个消费者互相独立顺序拉取每个分区的消息
+            消费者可以按照任意的顺序消费消息, 恶搞: 消费者可以重置到旧的偏移量, 重新处理之前已经消费过的消息, 或者直接跳到最近的位置, 从当前时刻开始消费
+
+            拉取数据流程
+                每个consumer都可以根据分配策略(默认RangeAssignor), 获取要消费的分区
+                从zk中获取到当前consumer对应的offset(zk中存储当前consumer上一次消费的offset)
+                找到该分区的leader, 拉取数据
+                消费者向zk中提交offset
+    Kafka的物理存储
+        文件存储机制
+            一个Topic由多个分区组成
+            一个分区由多个segment组成
+            一个segment由(.log, .index(稀疏索引), .timeindex文件组成)
+
+            每个日志文件(.log)的文件名为起始偏移量, 因为每个分区的起始偏移量是0, 所以分区的日志文件都以000000000000.log开头
+            默认每个日志文件最大为: log.segment.bytes=1024*1024*1024 1G
+                满了就会滚动生成新的log文件
+            为了简化根据offset查找消息, Kafka日志文件名设计为开始的偏移量
+        消息存放位置
+            /export/server/kafka_2.12-2.4.1/data
+        LEO(log-end-offset)
+            每个分区最后的位置, 生产者写消息就从leo开始写
+            相当于写指针, offset相当于读指针
+        消费者从磁盘读取数据
+            根据offset(offset是针对于分区的一个全局偏移量)找到所对应的在哪个segment上
+            然后根据offset算出在这个segment上的相对offset
+                segment由log, index, timeindex等文件组成, index是一个稀疏索引, 肯定有一个对应映射关系, 那么就要算出一个在当前segment上的一个相对offset
+                相对offset应该是全局offset-当前segment起始offset, 然后再算一下
+            最后根据这个相对offset读取log中对应的消息
+            为了提高查询效率, 每个文件都会维护对应的范围内村, 查询的时候使用二分查找(顺序读取)
+
+            存数据到log文件中是"顺序写入",快, 所以消息就不能被更改
+    删除消息
+        Kafka中, 消息是会被"定期清理"的(默认7天), 一次删除一个segment段中的日志文件
+        Kafka的日志管理器, 会根据Kafka的配置, 来决定哪些文件可以被删除
+        是不能删除某一条消息的, 顺序写进去的, 没法删除
+    消息不丢失⭐️
+        三个方面: Broker, Producer, Consumer 不丢失
+        Broker数据不丢失
+            生产者通过分区的Leader写入数据后, 所有在ISR中的follower都会从leader中复制数据, 这样, 可以确保即使Leader崩溃了, 其他的follower的数据仍然是可用的
+        Producer不丢失
+            可以配置ack策略(0/1/all(-1))
+            生产者有两种发送消息的方式
+                同步: 发送一批数据给Broker, 等待kafka返回结果
+                异步: 发送一批数据给Broker, 提供一个回调接口
+        Consumer不丢失
+            消费者消费数据的时候, 只要每个消费者记录好offset的值就可以(操作成功之后再去提交offset, 发生异常不提交), 就能保证数据不丢失
+                没操作就提交, 会导致消息丢失(就是再也不能消费了)
+
+        Consumer重复消费-解决思路/方案
+            比如说, 获取消息后, 要将数据存入到MySQL, 然后要去提交offset, 如果提交offset到ZK失败, 那么就会导致重复消费, 因为这个消息没有被提交
+            如果是ZK挂了, 那么消息就一直不能被提交, 重复消费, 此时可以选择LowerAPI将消息存入到MYSQL, 提交offset到MySQL, 然后数据存入和消息提交到MYSQL放入到一个事务中, 如果提交失败, 那么存入的数据也会回滚, 可以某种程度上解决重复消费的问题
+    数据积压
+        Kafka消费数据是非常快的, 但是如果由于处理kafka消息时, 有一些外部因素, 会导致Kafka中数据积压, 如果数据一直积压, 会导致数据处理的实时性收到较大影响
+    Kafka数据清理
+        Kafka的消息存储在磁盘中, 为了控制磁盘占用空间, Kafka需要不断滴对过去的一些消息进行清理工作. Kafka的每个分区都有很多的日志文件, 这样也是为了方便进行日志的清理, Kafka只能够, 提供两种日志清理方式
+        日志删除(Log Deletion): 按照指定的策略直接删除不符合条件的日志
+        日志压缩(Log Compaction): 按照消息的key进行整合, 有相同的key但是不同value的值, 只保留最后一个版本
+
+        配置项
+            log.cleaner.enable: true 开启自动清理日志功能
+            log.cleanup.policy: 
+                delete: 删除
+                compaciton: 压缩
+                delete,compaction: 同时支持删除, 压缩
+        日志删除
+            是以segmeng为单位来定期清理的
+        定时日志删除任务
+            Kafka日志管理器中会有一个专门的日志删除任务来定期检测和删除不符合保留条件的日志分段文件, 这个周期可以通过broker端参数 log.retention.check.interval.ms 来配置, 默认值为300000, 即5min
+            策略
+                1. 基于时间的保留策略
+                    log.retention.ms/minutes/hours
+                    默认配置: log.retention.hours=168, 7天
+                2. 基于日志大小的保留策略
+                3. 基于日志起始偏移量的保留策略
+            删除日志分段时
+                从日志文件对象中所维护日志分段的跳跃表中移除待删除的日志分段, 以保证没有线程对阵写日志分段进行读取操作
+                2. 将日志分段文件添加上".delete"的后缀(包括日志分段对应的索引文件)
+                3. Kafka后台定时任务会定期删除这些".delete"为后缀的文件, 这个任务的延迟执行时间可以通过file.delete.delay.ms参数来设置, 默认为60000, 一分钟
+
+
+
+
+
+
+
+    
+        

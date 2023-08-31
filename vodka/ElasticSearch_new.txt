@@ -1,0 +1,299 @@
+ElasticSearch
+    概念
+        index: 相当于MySQL的数据库
+        document: 相当于MySQL的一行记录
+        field: 相当于MySQL的一个字段
+    Shard分片
+        1. 一个index包含多个分片, 默认为5P(Primary Shard)---可读可写, 默认为每一个分片分配一个副本R(Replica Shard)--->主要分担查询压力, 只能读
+            PrimaryShard的数量在创建索引时进行设置, 如果想修改, 需要重建索引
+            对于ReplicaShard可以随时添加
+        2. 每一个PrimaryShard都是一个Lucene实例, 有完整的创建索引和处理请求的能力
+        3. ES会自动在分片节点上为我们做Shard均衡(像Redis的分片集群扩容时的均衡)
+        4. 一个doc是不可能存在于多个PShard中, 但是可以存在于多个RShard(副本)中
+        5. "PShard和对应的副本不能放在同一台机器上", 防止机器宕机导致副本不可用, 最低的可用配置是两台节点, 互为主备
+    容错容灾
+        要保证数据的完整性, 加入分了三个P1P2P3, 那么要保证三个分片的数据完整性, 不管是保留PrimaryShard还是ReplicaShard
+        分片时, 会自动根据PrimaryShard和ReplicaShard进行自动分片, 会使得最高可用, 单个机器宕机带来的损失最小
+            如果有选择, 一般不会把相同的分片放到同一台机器
+
+        ES容错机制
+            1. Master选举
+                如果宕机的是Master机器, 那么会在剩下的候选机器中重新选一个作为Master
+                符合候选机器的条件
+                    配置 node.master: true
+            2. Replica升级为Primary
+                如果宕机的机器中存在Primary节点, 那么选出来的Master中如果存在对应的Replica分片, 就会自动升级为对应的Primary分片
+            3. 重启故障机
+                新的Master会尝试重启之前宕掉的机器
+            4. 数据恢复/同步
+                在整个过程中, 重启之后的机器, 会变成ReplicaShard, 并且会伴随一定的数据丢失/不同步, 这个时候就需要从新的Master中("增量拷贝"), 同步新的数据到旧机器
+    ES节点
+        Master候选节点配置
+            node.master: true   是否作为Master候选节点
+            node.data: true 是否作为数据节点
+
+            只有配置了node.master:true的才会作为候选节点, 可能会成为Master节点
+            但是一般设置节点为master的时候, 不要进行数据存储, 耗费额外的性能, master不要去做数据查询和存储
+
+            如果两个都设置为false, 那么这个节点就是"协调"节点, 用来转发请求到其他节点上,  不存储数据也不会成为master
+        ES节点角色
+            1. Master(主节点)
+            2. Voting(投票)
+            3. Coordinating(协调)
+        ES节点类型
+            1. 候选节点
+                node.master: true
+            2. 数据节点
+                node.data: true
+            3. Ingest node 前置处理节点
+                就是在数据处理之前, 做一些操作(eg:转换之类的)
+            4. 机器学习节点
+    ES节点健康值检查
+        Green: 所有的PShard和RShard都是active, 集群很健康
+        Yellow: 至少有一个RShard不可用, 但是数据仍然是完整的
+        Red: 至少有一个PShard不可用, 数据不完整, 集群不可用
+
+        localhost:9200/_cluster/health
+    常用操作
+        更新
+            一般更新为全量更新, 部分更新需要手动指定_update
+        删除
+            ES是延迟删除, 调用删除API的时候, 并不是立即删除, 过一段时间之后才会删掉, 删除的时候版本号也会+1
+            删除的数据积累到一定量之后, 才会真正物理删除
+    ES Mapping映射
+        mapping的常见属性
+            type: 字段的数据类型, 常见的简单类型如下
+                字符串: text(可以进行分词), keyword(不能进行分词)
+                树脂: long, integer, short, byte, double, float
+                布尔: boolean
+                日期: date
+                对象: object
+            index: 指定字段是否需要创建索引, 默认为true, 是否参与搜索
+            analyzer: 使用哪种分词器, 只对text类型的有效
+            properties: 该字段的子字段
+        创建索引
+            put /索引库名
+                {
+                    "mapping":{
+                        "properties":{
+                            "字段1":{
+                                "type":"text",
+                                "index":"true",
+                                "analyzer":"ik"
+                            }
+                        }
+                    }
+                }
+        索引库的CRUD
+            查询
+                GET /索引库名
+            更新
+                索引库一旦创建, 就无法进行修改, 但是可以添加新的字段, 如下
+                    PUT /索引库名/_mapping
+                    {
+                        "properties":{
+                            "新字段名":{
+                                "type":"integer"
+                            }
+                        }
+                    }
+        文档的更新
+            全量更新
+                PUT /索引库名/_doc/文档id
+                {
+                    "字段名":"xxx"
+                }
+            局部更新
+                POST /索引库名/_update/文档id
+                {
+                    "doc":{
+                        "字段名":"xxx"
+                    }
+                }
+    ES查询
+        DSL查询分类
+            查询所有
+                查询出所有数据, 一般测试用
+                match_all
+            全文检索(full text)
+                利用分词起对用户输入内容进行分词, 然后去倒排索引库中匹配
+                match_query
+                multi_match_query
+            精确查询
+                根据精确词条值查找数据, 一般是查找keyword, 数值, 日期, boolean等类型字段
+                ids
+                range
+                term
+                terms
+            地理(geo)
+                根据经纬度查询
+                geo_distance
+                geo_bounding_box
+            复合
+                复合查询可以将上面的条件组合起来进行合并查询
+                bool 
+                function score
+        ---
+        返回数据
+            took
+                耗时
+            timeout(true/false)
+                表示是否超时
+                可以指定超时时间, 如果超时了, 那么会返回超时时间内的数据(不管查到了多少数据)
+                    eg: 假设设定超时时间为2s, 一个查询要查10s(总数据1w条), 但是超时了, 在2s之内, 就只查到了2000条数据, 就返回2000条数据
+        查询
+            match(包含/匹配)
+                match_all
+                    查询所有
+                match 
+                multi_match
+                    多字段匹配, 只要在指定的这些字段中包含 关键词 都查出来
+                    会对关键词分词之后, 包含
+            source
+                可以指定返回的字段
+                _source: ["name","age"]
+        全文检索
+            term⭐️⭐️⭐️
+                查询的关键词不会分词, 会完全匹配, 但是ES中对应字段的数据是会在分词之后进行查询, 也就是查数据是去查分词之后的
+            terms
+                查询的关键词仍旧不会分词, 但是可以指定ES中数据分词之后包含多个指定关键词列表中任意一个即可
+                分词之后数据 contains [关键词列表]
+                只要包含关键词列表中的一个就会查出来
+            和match的区别
+                match查询, 关键词会被分词, 然后去查
+        短语搜索
+            就是直接包含 关键字的, 关键字不会被分词, 是个短语嘛
+        查询和过滤(多个条件进行组合)
+            bool
+                must(and)
+                filter(过滤器)---不计算相关度,支持cache
+                    因为不会计算相关度, 所以他的性能会比match之类的query来的高
+                    会先执行filter, 对所有数据过滤一遍之后, 然后再执行query, 这样肯定效率高一些
+                    还有"缓存"
+                should(or)
+                    minimum_should_match:1
+                    should的条件中至少满足1个
+                must_not()
+        高亮查询
+            highlights
+        
+        Deep Paging 问题
+            ⭐️⭐️⭐️应该尽量避免Deep Paging问题
+                1. 当数据超过1w时, 不要使用
+                2. 返回结果不要超过1000
+                解决办法
+                    尽量避免神查询
+                    使用SrollSearch
+            ScrollSearch
+                查询的时候可以使用ScrollSearch
+                    GET /index/_search?scroll=3m 三分钟内 scroll的结果有效
+                        查询会返回一个scroll_id, 这里相当于本次查询的一个序号, 下次查询带着这个序号就可以立马查询到结果, 可能是他吧数据存起来了, 并且有个有效期3m
+                    GET /_search/scroll
+                    {
+                        "scroll":"2m",  表示执行查询的时候续期
+                        "scroll_id":"xxxx"  scrollid
+                    }
+    ES数据聚合(Aggregations)
+        可以参与聚合的字段类型必须是
+            keyword
+            数值
+            日期
+            布尔
+        聚合分类
+            桶聚合(Bucket)
+                用来对文档字段值分组, 那这个字段肯定是不能进行分词的
+                TermAggregation: 按照文档字段值进行分组
+                Date Histogram: 按照日期阶梯分组, 例如一周为一组, 或者一月为一组
+                ip, range... 很多
+            度量聚合(Metric)
+                用于计算一些值, 比如: 最大值, 最小值, 平均值
+                avg, max, min, stats(包含avg, max, min, sum, count...)
+            管道聚合(Pipeline)
+                以其他聚合的结果为基础进行的聚合
+        DSL(和query同级)
+            查询
+                GET /index/_search
+                {
+                    "size":0, 设置size为0, 表示结果中不包含文档数据, 只包含聚合结果, hits中数据为空
+                    "aggs":{    定义聚合
+                        "customeName":{ 自定义当前聚合的名称
+                            "terms":{   聚合的类型(terms/date/ip/range...)
+                                "field":"xxx",  要进行聚合的字段
+                                "size":20,   聚合之后获取的结果数量, 默认10, 比如聚合之后查出来100条数据, 想只获取20条
+                                "order":{
+                                    "_count":"asc" 指定排序规则
+                                }
+                            }
+                        }
+                    }
+                }
+            返回结果
+                {
+                    "took":0,
+                    "time_out":false,
+                    "_shards":{...},
+                    "hits":{...},
+                    "aggregations":{
+                        "自定义的聚合名称":{
+                            "doc_count_error_upper_bound":0,
+                            "sum_other_doc_count":0,
+                            "buckets":{ buckets中数量为上面指定的size:20
+                                默认排序规则, 按照doc_count降序
+                                {
+                                    "key":"xxx",
+                                    "doc_count":112 当前key下有多少条数据
+                                },
+                                {
+                                    "key":"yyy",
+                                    "doc_count":12 当前key下有多少条数据
+                                },
+                                ...
+                            }
+                        }
+                    }
+                }
+        Bucket聚合-限定范围
+            默认情况下, Bucket聚合是对索引库中的所有文档做聚合, 我们可以限定要聚合的文档范围, 只需要添加query条件即可, 跟mysql一样的, 先把范围缩小, 再group by
+                GET /index/_search
+                {
+                    "query":{
+                        "term":{
+                            ...
+                        }
+                    }
+                    "size":0, 设置size为0, 表示结果中不包含文档数据, 只包含聚合结果, hits中数据为空
+                    "aggs":{    定义聚合
+                        "customeName":{ 自定义当前聚合的名称
+                            "terms":{   聚合的类型(terms/date/ip/range...)
+                                "field":"xxx",  要进行聚合的字段
+                                "size":20,   聚合之后获取的结果数量, 默认10, 比如聚合之后查出来100条数据, 想只获取20条
+                                "order":{
+                                    "_count":"asc" 指定排序规则
+                                }
+                            }
+                        }
+                    }
+                }
+        Metric聚合
+            要放在桶里面进行聚合
+        RestClient
+            request.source().size(0); 表示不包含文档, 只包含聚合结果
+            request.source().aggregation(AggregationBuilders.term("自定义聚合名称").field("字段名").size(20));
+    分词器
+        es中的分词器的组成包含三个部分
+            character filters: 在tokenizer之前对文本进行处理, 比如删除, 替换字符等
+            tokenizer: 将文本按照一定的规则切割成词条, 真正的分词器
+            tokenizer filter: 将 tokenizer 输出的词条做进一步的处理, 例如大小写转换, 同义词处理, 拼音处理等
+    分布式集群
+        查询分为两个阶段
+            scatter phase: 分散阶段, 协调节点会把请求分发到每一个分片
+            gather phase: 聚集阶段, 协调节点会汇总数据节点的搜索结果, 并处理为最终结果集返回给用户
+
+
+                
+
+
+
+            
+
+        
