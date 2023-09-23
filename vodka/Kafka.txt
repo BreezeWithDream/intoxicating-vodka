@@ -131,7 +131,7 @@ Kafka
     分区的Leader和Follower
         概述
             Kafka中, 每个topic都可以配置多个分区以及多个副本, 每个分区都有一个leader以及0个或者多个follower, 在创建topic时, kafka会将每个分区的leader均匀地分布在每个Broker上
-            正常使用Kafka是感知不到的Leader和Follower存在的, "所有的读写都是由Leader处理, 而所有的Follower都只是负责数据同步", Follower复制Leader的日志文件, 如果Leader出现故障, Follower就会被选举为Leader
+            正常使用Kafka是感知不到的Leader和Follower存在的, "所有的读写都是由Leader处理, 而所有的Follower都只是负责数据同步/备份", Follower复制Leader的日志文件, 如果Leader出现故障, Follower就会被选举为Leader
         简而言之
             Kafka中的Leader和Follower是针对分区而言的
             Kafka中的Leader负责处理读写操作, 而Follower只负责副本数据的同步

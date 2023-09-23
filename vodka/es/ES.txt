@@ -1,0 +1,73 @@
+ES
+    高可用
+        ES不允许Primary和他的Replica放在同一个节点, 要不然这台机器挂了, 直接不能保证数据完整
+        ES高可用, 他自己会根据分片数量和节点配置进行分片操作, 尽量保证高可用性最高, 不一定就是一个分片一个节点,任何一台节点都可以保证数据完整性, 最大程度的保证可用性, 从而实现高可用
+    节点类型
+        ES节点角色
+            Master节点
+                主要用于分片的均衡, 索引的操作, 分发
+
+                每个集群有且仅有一个
+                尽量避免Master节点作为数据节点, 他作为Master就是Master, 不要让他干别的
+                node.master: true   是否作为Master候选节点
+                node.data: true 是否作为数据节点
+                只有配置了node.master:true的才会作为候选节点, 可能会成为Master节点
+                但是一般设置节点为master的时候, 不要进行数据存储, 耗费额外的性能, master不要去做数据查询和存储
+            Voting投票节点
+                Node.voting_only: true (仅投票节点, 即使配置了 node.master=true, 也不会参选)
+                仅仅用来投票, 但是如果配置了node.data=true, 也可以作为数据节点
+            Coordinating 协调节点
+                每一个节点都隐式的是一个协调节点, 都可以用来转发请求
+                如果都同时设定了node.master=false, node.data=false, 那么这个节点就仅作为协调节点
+        相关配置项
+            node.master
+                是否把当前节点作为候选节点, 可以参与master的选举
+            node.data
+                是否把当前节点作为数据节点, 存储数据
+            协调节点的配置
+                node.master=false, node.data=false
+            ES默认配置
+                node.master=true, node.data=true, 其实这样并不是很好
+            
+        ES节点类型
+            1. 候选节点
+                node.master: true
+            2. 数据节点
+                node.data: true
+            3. Ingest node 前置处理节点
+                就是在数据处理之前, 做一些操作(eg:转换之类的)
+            4. 机器学习节点
+    容错步骤
+        Master宕机 
+            1. 如果宕机节点是Master, 那么进行Master选举
+                可能会产生脑裂, 产生多个Master
+                解决: discovery.zen.minimum_master_node=N/2+1
+            2. Replica容错
+                新选举出来的Master中对应原有Master节点中的分片副本升级为 Primary分片 
+            3. Master节点会尝试重启故障机器(原宕机的机器)
+            4. 将新Master数据同步到原来宕机的机器中去
+
+            如果宕机的机器不是Master, 则只是执行234
+        Master选举
+            选举发生的条件
+                有 minimum_master_nodes 个 节点都联系不上Master的时候, 这个时候断定Master失联
+            选举过程
+                1. 会去ping所有的节点, 看看有没有哪个节点自称是Master节点
+                2. 如果没有, 那么就会在候选节点中进行选举Master
+                    node.master=true 
+                3. 投票选举
+                    规则
+                        1. 寻找clusterStateVersion比自己高的候选节点, 向其发送选票
+                            这个就是集群版本信息, 相当于ZK中的纪元, 每产生一次选举, 就会生成一个更新的版本号
+                        2. 如果clusterStateVersion一样, 那么就在其中(包含当前节点)选择一个id最小的节点, 也就是最老的节点, 向该节点发送选票
+                        3. 如果一个节点收到足够多的投票并且它也向自己投票, 就会成为Master节点, 并开始发布集群状态
+                4. 昭告天下, 自己是新的Master节点
+            脑裂
+                选出多个Master
+                解决
+                    配置 discovery.zen.minimum_master_node=N/2+1
+                    要当选为Master节点, 至少获得选票的票数
+                奇数
+                    集群中通常应该有奇数个符合主机要求的节点, 如果是偶数个, 那么ES则会将其中一个排除在外, 假如有四台机器, 那就会扣1台, 只有3台进行投票, 这样的遗漏不会降低集群的容错能力
+                    
+        
