@@ -1,2 +1,151 @@
 K8S
-    
+    资源
+        Namespace
+            名称空间, 环境隔离
+        Pod相关操作
+            -n 指定名称空间
+            kubectl run 名字 --image=镜像
+                运行一个Pod
+            kubectl describe Pod名
+                查看一个Pod的状态
+            kubectl get pod 
+                查看default名称空间下的Pod
+                -owide 
+                    获取更加详细的信息
+            kubectl delete pod Pod名
+                删除一个Pod, 也可以指定 -f pod.yml 根据文件删除Pod, 里面定义的资源会被全部干掉
+            每一个Pod都会被分配一个ip地址, 而里面的容器则用端口进行区分
+        Deployment
+            概述
+                控制Pod, 使Pod拥有多个副本, 自愈, 扩容缩容等能力
+                当我们需要部署Pod到多台服务器, 不可能手动去执行kubectl run 很多次, 这个时候就需要K8S的deployment帮我们去进行操作
+            创建部署
+                kubectl create deployment 部署名 --image=镜像名:版本
+                    创建一次部署, 会将应用进行部署
+                    和run Pod的区别
+                        当 执行 kubectl delete "应用名"(Pod名) 时, run pod的直接干掉, 而deployment的则会不断尝试重启新的应用
+                        这就是"自愈"
+                    删除deployment
+                        kubectl delete deploy 部署名
+            多副本
+                可以指定进行集群部署, 自动根据指定的副本数, 在不同机器上进行部署
+                kubectl create deployment 部署名 --image=镜像名:版本 --replicas=3
+            扩缩容 
+                扩容 
+                    本来只部署了两台机器, 结果顶不住, 需要多搞几台
+                缩容
+                    部署了五台, 结果发现资源太多了, 缩减几台吧
+                命令
+                    kubectl scale --replicas=3 -n 名称空间 deployment/部署名
+                        进行扩容/缩容, 指定副本数量最终为3
+                    kubectl edit deployment 部署名
+                        修改其中的replicas配置, 也可以进行扩容缩容
+            自愈/故障转移
+                自愈: 如果所部署中的容器/应用出现问题挂掉, 那么K8S会尝试自动重启
+                故障转移: 有的时候没发去重启, 比如某台服务器宕机了, 这个时候会自动在另外的机器上拉起一份应用, 这就是故障转移
+            滚动更新(不停机更新)
+                当有新版本的时候, 先将新版本的应用启动起来, 此时不会停掉老版本, 新版本起来之后, 请求会到新版本中, 老版本干掉, 机器一台一台轮流采取这种方式更新, 滚动更新
+                更新过程中如果有一台更新出现问题, 后续机器将不再进行更新
+                命令
+                    本质就是替换掉镜像
+                    kubectl set image deploy/部署名 镜像名=新镜像名:版本 --record=true
+            版本回退
+                查看某个部署的历史记录
+                    kubectl rollout history deployment/部署名
+                回退
+                    kubectl rollout undo deploy/部署名 --to-reversion=历史版本号
+                    也是先启动一个新的, 再杀死现存的
+        工作负载
+            Deployment 
+                无状态应用部署, 比如微服务, 提供多副本等功能
+            StatefulSet
+                有状态应用部署, 比如Redis等, 提供稳定的存储和网络(固定IP)等功能
+                会提供数据挂载等功能
+            DaemonSet
+                守护型应用部署, 比如日志收集组件, 在每个机器上都运行一份
+            Job/CronJob
+                定时任务部署, 比如垃圾清理组件, 在指定时间都进行运行
+            这些都统称为工作负载, 底层都是基于Pod运行的
+        Service
+            是"将一组Pods对外暴露成一个统一服务", 对Pod进行负载均衡和服务发现
+            eg 
+                比如后台服务部署了好几个, 那么前端应用在请求的时候, 不可能去写好几个地址, 那么既然后台服务都是同一套系统用来做负载均衡, 这个时候就将这些后台服务抽成一个Service暴露出来, 使用同一个网络ip,那么前端访问这一个Service就可以了
+            命令
+                暴露Service
+                    kubectl expose 部署名 --port=端口 --target-port=目标端口
+                    端口
+                        当前Service所采用的端口
+                    目标端口
+                        Pod应用所采用的端口
+                查看Service
+                    kubectl get service 
+                        可以看到Service的固定ip等, 仅在K8S集群内有效, 使用service的ip:port就可以负载均衡地访问所配置的应用/服务
+                对应的应用访问Service的ip和端口就可以了, 也可以通过Service的域名(ServiceName.命名空间名.svc)
+            模式
+                ClusterIP: 集群内模式
+                    当使用上面暴露Service的命令不指定--type时, 默认使用ClusterIP模式, 集群内部的访问
+                NodePort: 集群外也可以访问
+                    将Pod所在的机器暴露到公网(有对应Pod所在的每一台机器都会暴露出去), 让公网也能访问到
+                    暴露Service之后, 会产生一个新的随机端口(30000~32767), 通过Pod所在服务器的公网IP和这个随机端口, 就能访问到对应的应用服务
+                    也可以仍旧通过Service进行负载均衡访问
+        Ingress
+            访问K8S集群中Service的唯一入口, 相当于网关
+            Ingress--->Service--->Pods
+            安装成功, 其实也相当于一个svc, 会在每一台机器上都暴露两个端口(一个是用于映射80端口的, 一个是用于映射443的), 访问每一台机器都可以进行网关路由
+        K8S网络模型
+            Pod层, Service层, Ingress层
+            Pod之间可以互通, Pod和Service之间也可以互通
+        存储抽象(PV&PVC)
+            数据挂载
+                概述
+                    Docker方式的数据挂载在K8S上并不通用, 因为Docker再怎么都是在同一台机器上工作, 而在K8S中, 如果某一个应用挂掉, K8S需要将它重启, 重启之后可能不在原来的机器上了, 那么如果是挂载在原来机器上的数据, 可能也无法访问到(比如MySQL)
+
+                    那么这个时候就不会采取应用在各自的机器上进行挂载这种方式, 而是统一搞一个存储层出来进行数据存放, 应用节点即便挂了, 重启节点换了机器, 也不会影响数据的完整性, 只需要找到在存储层中对应的路径即可
+
+                存储层的方案: Clusterfs, NFS, CephFS
+                NFS
+                    就是使用一台机器作为主存储机器(存储服务, 搞一个路径专门用来存放数据), 而在其他机器上都存在它的备份(各自使用各自的路径进行同步), 这样即便某个应用挂掉了, 在新的机器上重启, 数据也不会丢失, 因为有备份
+                原生方式挂载
+                    在每次Deployment的时候进行指定挂载的方式和路径, 需要自己手动创建对应路径
+                    缺点
+                        相同的Pod多个部署, 会使用同一个路径, 当一个Pod挂掉, 那么对应的路径下相关的这个Pod数据不会被删掉
+                        对于Pod使用的存储量大小没有限制
+                PV&PVC 
+                    PV(Persistent Volume): 持久化路径
+                    PVC(Persistent Volume Claim): 持久化声明, 声明需要使用的持久卷规格
+
+                    PV池: 提前准备好的一些存储空间
+                    
+                    静态供应(提前创建好PV池, 容量固定的, 但是如果用着用着容量不够了, 就没办法了)
+                    创建PV池, 创建PVC, 创建Pod时和PVC进行绑定
+        配置挂载(ConfigMap)
+            概述
+                就像Docker中对于配置文件信息的挂载, 而不是用来存储数据
+                配置集存放于ETCD中
+            步骤
+                创建配置集
+                    kubectl create cm 配置集名称 --from-file=文件
+                        将指定的文件做成K8S配置集
+                运行Deployment/Pod的时候指定使用的配置集
+            修改了cm之后, pod对应的配置也会同步修改, 但是至于对应服务会不会生效, 取决于服务是否有热更新能力
+        Secret
+            是K8S中专门用来保存敏感信息, 比如密码, 密钥, 令牌等不方便明文存储的...
+
+            创建secret
+                kubectl create secret docker-registry xxx --xxx
+            然后对相关资源进行操作时, 就可以指定secret使用里面的密码等敏感信息
+
+KubeSphere
+    部署应用
+        1. 应用的部署方式(Deployment/StatefulSet/DaemonSet/CronJob)
+        2. 应用的数据挂载(数据, 配置文件挂载)
+        3. 应用的可访问性(网络是否要暴露...)
+
+        有状态服务一般都使用单节点读写模式? 网络模式一般会默认为ClustIP(集群内部访问)
+        部署有状态服务也一般推荐每次都指定存储卷,而不是先创建存储卷PV, 然后进行绑定
+            比如: mysql, 每次新起的mysql肯定是独立的数据和存储, 我们自己做同步, 如果都是使用预先的存储卷, 那么他们的数据都会一样了
+            如果是采用临时指定的方式, 当我们多开副本时, 每次副本都会使用独立的空间和数据, k8s自己会去新开
+
+    Jenkins
+        environment
+            定义的所有变量可以在流水线的任意位置通过"$变量名"进行使用
