@@ -1,0 +1,90 @@
+Spring进阶
+    BeanDefinitionReader
+        用于加载XML配置文件/注解, 将他们里面的配置, 生成对应的BeanDefinition, 然后放到容器中
+    BeanFactory和ApplicationContext
+        ApplicationContext是BeanFactory的子接口,提供了更多的功能
+        而如果我们想改容器中的东西,拿到BeanFactory就可以改
+    BeanFactoryPostProcessor 
+        执行时机: 在将BeanDefinition加入到容器后,还没真正创建对象之前 执行
+            BeanFactory中包含了一个 BeanDefinitionMap, 所有的BeanDefinition都会保存到这个map中
+            postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory)
+        和BeanPostProcessor的区别
+            BeanFactoryPostProcessor 是用来修改/增强BeanDefinition的, 所以他的执行时机是在BeanDefinition保存到容器后, 创建Bean对象之前
+            BeanPostProcessor 是用来修改/增强Bean对象的
+    BeanDefinitionRegistryPostProcessor
+        BeanFactoryPostProcessor的子类
+        执行时机: 在BeanFactoryPostProcessor之前
+        举个例子
+            从xml文件解析--->配置类
+            ConfigurationClassPostProcessor implements BeanDefinitionRegistryPostProcessor 
+                重写了postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry)方法
+                    依次解析@Component @PropertySource @ComponentScan @Import @ImportResource @Bean
+    默认的BeanFactory: DefaultListableBeanFactory(集合性质的BeanFactory)
+    onRefresh()
+        Spring中默认是空的,但是在SpringBoot中,是有实现的,ServletWebServerApplicationContext 实现类,在这里面会创建一个TomcatServletWebServerFactory, 这就是内嵌一个Tomcat
+    BeanFactory和FactoryBean的区别
+        BeanFactory: 并不是指根接口,更多的偏向于是Bean对象创建的整体流程,Bean的生命周期是一个完整的标准化流程(由Spring来管理),相对比较麻烦---流水线
+        FactoryBean: 也是用来创建Bean对象到容器中---相当于私人订制
+            isSingleton()
+            getObjectType()
+            getObject()
+            只需要调用getObject()就可以返回具体的对象,整个对象的创建过程由用户自己来控制的,比较灵活
+    循环依赖+三级缓存
+        循环依赖
+            A中关联了B,B中又关联了A,当A创建了对象进行属性赋值时,会去先创建B,而创建了B对象又去进行属性赋值时,又会去创建A,这就是循环依赖
+        按照Bean的状态分类
+            成品
+                完成了实例化+初始化
+            半成品
+                完成了实例化,但未完成初始化
+        解决循环依赖的思想本质
+            实例化 和 初始化 可以分开执行
+                普通的构造器是不行的,因为构造器在创建对象之后就会立马赋值,所以导致无法完成循环依赖,因为他的实例化和属性赋值是一起的
+            给B赋值的时候,直接将初始化之后的半成品A赋值给B,然后在B完成创建之后对A进行赋值,这样就不存在循环依赖了
+        三级缓存
+            就是三个Map,用于区分Bean的状态的
+            源码
+                class DefaultSingletonBeanRegistry{
+                    ...
+                    一级缓存
+                    private final Map<String, Object> singletonObjects = new ConcurrentHashMap<>(256);
+                    二级缓存
+                    private final Map<String, Object> earlySingletonObjects = new ConcurrentHashMap<>(16);
+                    三级缓存
+                    private final Map<String, ObjectFactory<?>> singletonFactories = new HashMap<>(16);
+                    
+                    ...
+                }
+            区别
+                一级缓存和二级缓存 都是ConcurrentHashMap,而三级缓存则是 HashMap 
+                一级缓存和二级缓存存储的都是 Object类型, 而三级缓存存储的则是 ObjectFactory, 函数式接口
+            对象没有放到三级缓存中
+            RuntimeBeanReference
+            getEarlyBeanReference(beanName,mbd,bean);
+    观察者模式
+        监听器,监听事件,多播器/广播器
+    Environment
+        接口,包含了当前系统的某些属性值/变量值, 方便后期获取系统的环境信息
+    启动流程
+        prepareRefresh()
+            设置启动时间,容器开启+结束标志位
+            设置环境信息
+            设置一些监听器和事件集合对象
+        obtainFreshBeanFactory()
+            创建并获取容器对象DefaultListableBeanFactory+从xml/注解中加载BeanDefinition到容器中
+                几个比较核心的容器接口
+                    BeanFactory
+                    HierachicalBeanFactory
+                    ListableBeanFactory
+                    ConfigurableBeanFactory
+                使用最多的容器类
+                    DefaultListableBeanFactory
+        prepareBeanFactory(beanFactory)
+            为当前BeanFactory设置某些初始值
+                beanFactory.ignoreDependencyInterface(EmbeddedValueResolverAware.class); 这些都是忽略Aware接口, 因为后面invokeAwareMethods()会统一处理
+        ---
+        invokeBeanFactoryPostProcessors(beanFactory);
+            实现了BeanFactoryPostProcessor接口的类,调用他们重写的方法 postProcessorBeanFactory() 
+    refresh() 和 destroy() 都会加锁
+        
+        

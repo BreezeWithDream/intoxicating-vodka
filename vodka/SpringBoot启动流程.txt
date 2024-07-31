@@ -1,0 +1,152 @@
+SpringBoot启动原理
+    public static ConfigurableApplicationContext run(Class<?>[] primarySources, String[] args) {
+        return new SpringApplication(primarySources).run(args);
+    }
+    1、创建SpringApplication(核心: 保存一些组件信息)
+        public SpringApplication(ResourceLoader resourceLoader, Class<?>... primarySources) {
+            //保存资源加载器
+            this.resourceLoader = resourceLoader;
+            //断言主启动类是否为空
+            Assert.notNull(primarySources, "PrimarySources must not be null");
+            //保存主配置类的信息
+            this.primarySources = new LinkedHashSet<>(Arrays.asList(primarySources));
+            //判断当前web应用的类型并保存，判断你是响应式应用啊还是原生SERVLET应用，一般返回原生SERVLET应用类型
+            this.webApplicationType = WebApplicationType.deduceFromClasspath();
+            //bootstrappers 获取Spring的初始启动引导器，去spring.factories文件中找org.springframework.BootStrapper类型的---一般是没有的
+
+            //去spring.factories文件中找初始化器ApplicationContextInitializer，如果找到就保存起来★---7
+            //List<ApplicationContextInitializer<?>> initializers;
+            setInitializers((Collection) getSpringFactoriesInstances(ApplicationContextInitializer.class));
+            //去spring.factories文件中找应用监听器ApplicationListener，找到就保存起来---9
+            setListeners((Collection) getSpringFactoriesInstances(ApplicationListener.class));
+            //判断哪个是主程序类，就是去找有main方法的类，如果有多个就第一个是
+            this.mainApplicationClass = deduceMainApplicationClass();
+        }
+
+        也就是说如果你有监听器啊，初始化器啊就可以加到 spring.factories文件中去，然后springboot一启动就自己会去里面找然后保存起来
+
+        总的来讲，SpringApplication创建的过程就是将一些关键的组件信息读取出来，然后提前保存到SpringApplication里面来
+    2、运行SpringApplication---public ConfigurableApplicationContext run(String... args) {...}
+        1、记录应用的启动时间
+            StopWatch stopWatch = new StopWatch();
+            stopWatch.start();
+        (创建引导上下文---就是去遍历上面保存的bootstrappers---调用他们的initialize()方法---后面版本去掉了)
+        2、让当前应用进入headless模式(就是自力更生，不要想着去依赖别人)
+            configureHeadlessProperty();
+        3、获取所有的运行监听器
+            SpringApplicationRunListeners listeners = getRunListeners(args);
+            "其实还是去spring.factories中找SpringApplicationRunListener,然后保存起来"---getSpringFactoriesInstances()
+                private SpringApplicationRunListeners getRunListeners(String[] args) {
+                    Class<?>[] types = new Class<?>[] { SpringApplication.class, String[].class };
+                    return new SpringApplicationRunListeners(logger,
+                            getSpringFactoriesInstances(SpringApplicationRunListener.class, types, this, args));
+                }
+        4、开启所有的运行监听器
+            listeners.starting();
+            本质就是遍历所有的listeners，然后调用他们的starting()方法
+        3+4 监听器就可以监听到系统的运行状态
+            项目启动运行到这里，就会调用所有监听器的starting()方法，告诉你当前项目正在启动，如果自己写了SpringApplicationRunListener监听器放到spring.factories中去，那么就可以感知到，相当于通知所有感兴趣系统正在启动的人，项目正在starting，比如说你想在项目开始的时候获取一些信息之类的东东
+        5、保存命令行参数
+            ApplicationArguments applicationArguments = new DefaultApplicationArguments(args);
+        6、准备环境
+            ConfigurableEnvironment environment = prepareEnvironment(listeners, applicationArguments);
+                private ConfigurableEnvironment prepareEnvironment(SpringApplicationRunListeners listeners,
+                    ApplicationArguments applicationArguments) {
+                    //获取当前基础环境信息，如果有就能获取到，没有就默认创建一个---返回的是StandardServletEnvironment();因为是个SERVLET应用
+                    ConfigurableEnvironment environment = getOrCreateEnvironment();
+                    //配置环境信息---读取到所有配置源的配置属性值
+                    configureEnvironment(environment, applicationArguments.getSourceArgs());
+                    //绑定环境信息,就是相当于把信息保存到某个值
+                    ConfigurationPropertySources.attach(environment);
+                    //所有的运行监听器调用environmentPrepared(environment);
+                    listeners.environmentPrepared(environment);
+                    bindToSpringApplication(environment);
+                    if (!this.isCustomEnvironment) {
+                        environment = new EnvironmentConverter(getClassLoader()).convertEnvironmentIfNecessary(environment,
+                                deduceEnvironmentClass());
+                    }
+                    ConfigurationPropertySources.attach(environment);
+                    return environment;
+                }
+        (打印Banner)
+        7、创建IOC容器
+            context = createApplicationContext();
+            根据当前项目类型(SERVLET)创建容器,会创建一个"AnnotationConfigServletWebServerApplicationContext"容器
+        8、准备IOC容器的基本信息
+            prepareContext(context, environment, listeners, applicationArguments, printedBanner);
+                1、设置环境信息
+                    context.setEnvironment(environment);
+                2、执行postProcess
+                    postProcessApplicationContext(context);
+                3、执行初始化器
+                    applyInitializers(context);
+                    就是遍历上面我们获取到的那7个初始化器ApplicationCOntextInitializer，然后执行他们的initialize()方法
+                4、listeners.contextPrepared(context);
+                    遍历所有的SpringApplicationRunListeners,执行他们的contextPrepared()方法
+                5、listeners.contextLoaded(context);
+                    所有的监听器又调用contextLoaded()方法
+        容器准备完成
+        9、刷新IOC容器★---就是启动容器
+            refreshContext(context);
+            里面就是经典Spring容器的初始化过程，创建容器中所有的组件
+        10、容器刷新完成后工作
+            afterRefresh(context, applicationArguments);
+        11、stopWatch记时停止
+            stopWatch.stop();
+        12、所有监听器调用started()方法
+            listeners.started(context);
+            然后调用他们的started(); 表明当前项目启动完成
+        13、调用所有的Runners()
+            callRunners(context, applicationArguments);
+                获取容器中的ApplicationRunner
+                获取容器中的CommandLineRunner
+                合并所有runner并且按照@Order 进行排序
+
+                然后把所有runner拿过来遍历根据不同的情况调用他们的 run()方法
+                private void callRunners(ApplicationContext context, ApplicationArguments args) {
+                    List<Object> runners = new ArrayList<>();
+                    runners.addAll(context.getBeansOfType(ApplicationRunner.class).values());
+                    runners.addAll(context.getBeansOfType(CommandLineRunner.class).values());
+                    AnnotationAwareOrderComparator.sort(runners);
+                    for (Object runner : new LinkedHashSet<>(runners)) {
+                        if (runner instanceof ApplicationRunner) {
+                            callRunner((ApplicationRunner) runner, args);
+                        }
+                        if (runner instanceof CommandLineRunner) {
+                            callRunner((CommandLineRunner) runner, args);
+                        }
+                    }
+                }
+        14、如果以上有异常，则调用所有监听器的failed()方法
+            catch (Throwable ex) {
+                handleRunFailure(context, ex, exceptionReporters, listeners);
+                throw new IllegalStateException(ex);
+            }
+
+            private void handleRunFailure(ConfigurableApplicationContext context, Throwable exception,
+                    Collection<SpringBootExceptionReporter> exceptionReporters, SpringApplicationRunListeners listeners) {
+                try {
+                    try {
+                        handleExitCode(context, exception);
+                        if (listeners != null) {
+                            listeners.failed(context, exception);
+                        }
+                    }
+                    finally {
+                        reportFailure(exceptionReporters, exception);
+                        if (context != null) {
+                            context.close();
+                        }
+                    }
+                }
+                catch (Exception ex) {
+                    logger.warn("Unable to close ApplicationContext", ex);
+                }
+                ReflectionUtils.rethrowRuntimeException(exception);
+            }
+        15、最终结束，返回IOC容器
+            return context;
+关键组件
+    ApplicationContextInitializer
+    ApplicationListener
+    SpringApplicationRunListener
